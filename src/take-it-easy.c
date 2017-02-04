@@ -8,6 +8,7 @@ typedef enum ActivityState {
 static Window *s_window;
 
 static TextLayer *s_time_text_layer;
+static TextLayer *s_hrm_off_text_layer;
 static TextLayer *s_day_name_text_layer;
 static TextLayer *s_date_week_time_layer;
 static Layer *s_bt_image_layer;
@@ -105,34 +106,49 @@ static void update_progress_layer_proc(Layer *layer, GContext *ctx) {
 
     GRect bounds = layer_get_bounds(layer);
 
-    uint16_t progress = 0;
-    if(s_curr_hr > 70 && s_curr_hr < 80 ) {
-        progress = 25;
-    } else if(s_curr_hr > 80 && s_curr_hr < 90 ) {
-        progress = 50;
-    } else if(s_curr_hr > 90 && s_curr_hr < 100 ) {
-        progress = 75;
-    } else if(s_curr_hr > 100) {
-        progress = 75;
+    if(s_app_state == STATE_STARTED) {
+        text_layer_destroy(s_hrm_off_text_layer);
+
+        uint16_t progress = 0;
+        if(s_curr_hr > 70 && s_curr_hr < 80 ) {
+            progress = 25;
+        } else if(s_curr_hr > 80 && s_curr_hr < 90 ) {
+            progress = 50;
+        } else if(s_curr_hr > 90 && s_curr_hr < 100 ) {
+            progress = 75;
+        } else if(s_curr_hr > 100) {
+            progress = 75;
+        }
+
+        graphics_context_set_fill_color(ctx, GColorBlack);
+        graphics_fill_rect(ctx, (GRect) {.origin = {2, 90}, .size = {100, 3}}, 0, GCornerNone);
+        graphics_fill_rect(ctx, (GRect) {.origin = {2, 108}, .size = {100, 3}}, 0, GCornerNone);
+
+        graphics_fill_rect(ctx, (GRect) {.origin = {2, 85}, .size = {3, 5}}, 0, GCornerNone);
+        graphics_fill_rect(ctx, (GRect) {.origin = {27, 87}, .size = {3, 3}}, 0, GCornerNone);
+        graphics_fill_rect(ctx, (GRect) {.origin = {52, 85}, .size = {3, 5}}, 0, GCornerNone);
+        graphics_fill_rect(ctx, (GRect) {.origin = {77, 87}, .size = {3, 3}}, 0, GCornerNone);
+        graphics_fill_rect(ctx, (GRect) {.origin = {99, 85}, .size = {3, 5}}, 0, GCornerNone);
+
+        graphics_fill_rect(ctx, (GRect) {.origin = {2, 111}, .size = {3, 5}}, 0, GCornerNone);
+        graphics_fill_rect(ctx, (GRect) {.origin = {27, 111}, .size = {3, 3}}, 0, GCornerNone);
+        graphics_fill_rect(ctx, (GRect) {.origin = {52, 111}, .size = {3, 5}}, 0, GCornerNone);
+        graphics_fill_rect(ctx, (GRect) {.origin = {77, 111}, .size = {3, 3}}, 0, GCornerNone);
+        graphics_fill_rect(ctx, (GRect) {.origin = {99, 111}, .size = {3, 5}}, 0, GCornerNone);
+
+        graphics_fill_rect(ctx, (GRect) {.origin = {2, 93}, .size = {progress, 15}}, 0, GCornerNone);
+    } else {
+        char *text = "HRM is off";
+        GFont font = fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD);
+        graphics_context_set_text_color(ctx, GColorBlack);
+        GRect text_bounds = (GRect) {.origin = {0, 80}, .size = {100, 30}};
+        GSize text_size = graphics_text_layout_get_content_size(text,
+                                                                font,
+                                                                text_bounds,
+                                                                GTextOverflowModeWordWrap,
+                                                                GTextAlignmentCenter);
+        graphics_draw_text(ctx, text, font, text_bounds, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
     }
-
-    graphics_context_set_fill_color(ctx, GColorBlack);
-    graphics_fill_rect(ctx, (GRect) {.origin = {2, 90}, .size = {100, 3}}, 0, GCornerNone);
-    graphics_fill_rect(ctx, (GRect) {.origin = {2, 108}, .size = {100, 3}}, 0, GCornerNone);
-
-    graphics_fill_rect(ctx, (GRect) {.origin = {2, 85}, .size = {3, 5}}, 0, GCornerNone);
-    graphics_fill_rect(ctx, (GRect) {.origin = {27, 87}, .size = {3, 3}}, 0, GCornerNone);
-    graphics_fill_rect(ctx, (GRect) {.origin = {52, 85}, .size = {3, 5}}, 0, GCornerNone);
-    graphics_fill_rect(ctx, (GRect) {.origin = {77, 87}, .size = {3, 3}}, 0, GCornerNone);
-    graphics_fill_rect(ctx, (GRect) {.origin = {99, 85}, .size = {3, 5}}, 0, GCornerNone);
-
-    graphics_fill_rect(ctx, (GRect) {.origin = {2, 111}, .size = {3, 5}}, 0, GCornerNone);
-    graphics_fill_rect(ctx, (GRect) {.origin = {27, 111}, .size = {3, 3}}, 0, GCornerNone);
-    graphics_fill_rect(ctx, (GRect) {.origin = {52, 111}, .size = {3, 5}}, 0, GCornerNone);
-    graphics_fill_rect(ctx, (GRect) {.origin = {77, 111}, .size = {3, 3}}, 0, GCornerNone);
-    graphics_fill_rect(ctx, (GRect) {.origin = {99, 111}, .size = {3, 5}}, 0, GCornerNone);
-
-    graphics_fill_rect(ctx, (GRect) {.origin = {2, 93}, .size = {progress, 15}}, 0, GCornerNone);
 
     APP_LOG(APP_LOG_LEVEL_DEBUG, "update_progress_layer_proc: end, Heap Available: %d", heap_bytes_free());
 }
@@ -153,9 +169,6 @@ static void prv_start_activity(void) {
     health_service_set_heart_rate_sample_period(1);
     #endif
 
-    // Subscribe to tick handler to update display
-    tick_timer_service_subscribe(SECOND_UNIT, prv_on_activity_tick);
-
     // Subscribe to health handler
     health_service_events_subscribe(prv_on_health_data, NULL);
 }
@@ -168,9 +181,6 @@ static void prv_end_activity(void) {
     #if PBL_API_EXISTS(health_service_set_heart_rate_sample_period)
     health_service_set_heart_rate_sample_period(0);
     #endif
-
-    // Unsubscribe from tick handler
-    tick_timer_service_unsubscribe();
 
     // Unsubscribe from health handler
     health_service_events_unsubscribe();
@@ -243,6 +253,7 @@ static void prv_window_load(Window *window) {
 static void prv_window_unload(Window *window) {
     fonts_unload_custom_font(s_banana_brick_font_42);
 
+    text_layer_destroy(s_hrm_off_text_layer);
     text_layer_destroy(s_time_text_layer);
     text_layer_destroy(s_day_name_text_layer);
     text_layer_destroy(s_date_week_time_layer);
@@ -270,6 +281,9 @@ static void prv_init(void) {
     struct tm *t = localtime(&now);
     update_time(t);
 
+    // Subscribe to tick handler to update display
+    tick_timer_service_subscribe(SECOND_UNIT, prv_on_activity_tick);
+
     bluetooth_connection_service_subscribe(bluetooth_callback);
 }
 
@@ -280,6 +294,9 @@ static void prv_deinit(void) {
     #if PBL_API_EXISTS(health_service_set_heart_rate_sample_period)
     health_service_set_heart_rate_sample_period(0);
     #endif
+
+    // Unsubscribe from tick handler
+    tick_timer_service_unsubscribe();
 
     bluetooth_connection_service_unsubscribe();
 }
