@@ -1,13 +1,13 @@
 {
-  "name": "hrm-activity-tutorial",
-  "author": "MakeAwesomeHappen",
+  "name": "take-it-easy-hrm",
+  "author": "alexchiri",
   "version": "1.0.0",
   "keywords": ["pebble-app"],
   "private": true,
   "dependencies": {},
   "pebble": {
-    "displayName": "hrm-activity-tutorial",
-    "uuid": "614093ea-514e-4485-9390-ba14e4db7178",
+    "displayName": "take-it-easy-hrm",
+    "uuid": "f73537f4-adee-4f46-82c8-9edaa2433d78",
     "sdkVersion": "3",
     "enableMultiJS": true,
     "targetPlatforms": [
@@ -23,7 +23,33 @@
       "dummy"
     ],
     "resources": {
-      "media": []
+      "media": [
+        {
+          "type": "png",
+          "name": "IMAGE_BT_ON",
+          "file": "images/bton.png"
+        },
+        {
+          "type": "png",
+          "name": "IMAGE_BT_OFF",
+          "file": "images/btoff.png"
+        },
+        {
+          "type": "png",
+          "name": "IMAGE_OK",
+          "file": "images/ok.png"
+        },
+        {
+          "type": "png",
+          "name": "IMAGE_VIBRATE",
+          "file": "images/vibrate.png"
+        },
+        {
+          "type": "font",
+          "name": "BANANA_BRICK_36",
+          "file": "fonts/banana_brick_36.ttf"
+        }
+      ]
     }
   }
 }

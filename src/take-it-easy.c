@@ -1,86 +1,152 @@
 #include <pebble.h>
 
-const char START_ACTIVITY_STRING[] = "Press SELECT\n to START activity";
-const char END_ACTIVITY_STRING[] = "Press SELECT\n to END activity";
-
 typedef enum ActivityState {
-    STATE_NOT_STARTED,
-    STATE_IN_PROGRESS,
-    STATE_FINISHED
+    STATE_STARTED,
+    STATE_STOPPED
 } ActivityState;
 
 static Window *s_window;
 
-static TextLayer *s_status_text_layer;
 static TextLayer *s_time_text_layer;
-static TextLayer *s_bpm_text_layer;
+static TextLayer *s_day_name_text_layer;
+static TextLayer *s_date_week_time_layer;
+static Layer *s_bt_image_layer;
+static Layer *s_status_image_layer;
+static GBitmap *s_status_image;
+static GBitmap *s_bt_image;
+static Layer *s_progress_layer;
+static GFont s_banana_brick_font_42;
+static bool bluetooth;
 
-static TextLayer *s_title_text_layer;
-static TextLayer *s_total_time_text_layer;
-static TextLayer *s_min_bpm_text_layer;
-static TextLayer *s_max_bpm_text_layer;
-static TextLayer *s_avg_bpm_text_layer;
-
-static ActivityState s_app_state = STATE_NOT_STARTED;
-
-static time_t s_start_time, s_end_time;
-
+static ActivityState s_app_state = STATE_STARTED;
 static uint16_t s_curr_hr = 0;
-static uint16_t s_min_hr = 65535; // max uint16_t
-static uint16_t s_max_hr = 0;
 
-static uint32_t s_hr_samples = 0;
-static uint32_t s_hr_total = 0;
 
-int16_t get_min_hr() {
-    return s_min_hr;
+
+static void update_time(struct tm *tick_time) {
+    // Create a long-lived buffer
+    static char time_buffer[] = "00:00";
+    static char day_name_buffer[] = "Wednesday";
+    static char date_week_buffer[] = "00 Mon YEAR, wk no";
+
+    // Write the current hours and minutes into the buffer
+    if (clock_is_24h_style() == true) {
+        // Use 24 hour format
+        strftime(time_buffer, sizeof("00:00"), "%H:%M", tick_time);
+    } else {
+        // Use 12 hour format
+        strftime(time_buffer, sizeof("00:00"), "%I:%M", tick_time);
+    }
+
+    strftime(day_name_buffer, sizeof("Wednesday"), "%A", tick_time);
+    strftime(date_week_buffer, sizeof("00 Mon YEAR, wk no"), "%d %b %Y, wk %W", tick_time);
+
+    // Display this time on the TextLayer
+    text_layer_set_text(s_time_text_layer, time_buffer);
+    text_layer_set_text(s_day_name_text_layer, day_name_buffer);
+    text_layer_set_text(s_date_week_time_layer, date_week_buffer);
 }
 
-int16_t get_max_hr() {
-    return s_max_hr;
+static void prv_on_activity_tick(struct tm *tick_time, TimeUnits units_changed) {
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "prv_on_activity_tick: start, Heap Available: %d", heap_bytes_free());
+    update_time(tick_time);
+
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "prv_on_activity_tick: end, Heap Available: %d", heap_bytes_free());
 }
 
-int16_t get_avg_hr() {
-    if (s_hr_samples == 0) return 0;
-    return s_hr_total / s_hr_samples;
+static void update_bt_image_layer_proc(Layer *layer, GContext *ctx) {
+    APP_LOG(APP_LOG_LEVEL_ERROR, "update_bt_image_layer_proc: start, Heap Available: %d", heap_bytes_free());
+
+    GBitmap *old_s_bt_image = s_bt_image;
+
+    if (bluetooth) {
+        s_bt_image = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_BT_ON);
+    } else {
+        s_bt_image = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_BT_OFF);
+    }
+
+    graphics_draw_bitmap_in_rect(ctx, s_bt_image, layer_get_bounds(s_bt_image_layer));
+
+    // destroy old image to free up heap memory
+    gbitmap_destroy(old_s_bt_image);
+    APP_LOG(APP_LOG_LEVEL_ERROR, "update_bt_image_layer_proc: end, Heap Available: %d", heap_bytes_free());
+}
+
+void bluetooth_callback(bool connected) {
+    APP_LOG(APP_LOG_LEVEL_ERROR, "bluetooth_callback: start");
+    bluetooth = connected;
+
+    layer_mark_dirty(s_bt_image_layer);
+    APP_LOG(APP_LOG_LEVEL_ERROR, "bluetooth_callback: end");
+}
+
+static void update_status_image_layer_proc(Layer *layer, GContext *ctx) {
+    APP_LOG(APP_LOG_LEVEL_ERROR, "update_status_image_layer_proc: start, Heap Available: %d", heap_bytes_free());
+
+    GBitmap *old_s_status_image = s_status_image;
+
+    if (s_curr_hr < 110) {
+        s_status_image = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_OK);
+    } else {
+        s_status_image = gbitmap_create_with_resource(RESOURCE_ID_IMAGE_VIBRATE);
+    }
+
+    APP_LOG(APP_LOG_LEVEL_ERROR, "update_status_image_layer_proc: before draw, Heap Available: %d", heap_bytes_free());
+    graphics_draw_bitmap_in_rect(ctx, s_status_image, layer_get_bounds(s_status_image_layer));
+    APP_LOG(APP_LOG_LEVEL_ERROR, "update_status_image_layer_proc: after draw, Heap Available: %d", heap_bytes_free());
+
+    // destroy old image to free up heap memory
+    gbitmap_destroy(old_s_status_image);
+    APP_LOG(APP_LOG_LEVEL_ERROR, "update_status_image_layer_proc: end, Heap Available: %d", heap_bytes_free());
+}
+
+static void update_progress_layer_proc(Layer *layer, GContext *ctx) {
+    APP_LOG(APP_LOG_LEVEL_ERROR, "update_progress_layer_proc: start, Heap Available: %d", heap_bytes_free());
+
+    GRect bounds = layer_get_bounds(layer);
+
+    uint16_t progress = 0;
+    if(s_curr_hr > 70 && s_curr_hr < 80 ) {
+        progress = 25;
+    } else if(s_curr_hr > 80 && s_curr_hr < 90 ) {
+        progress = 50;
+    } else if(s_curr_hr > 90 && s_curr_hr < 100 ) {
+        progress = 75;
+    } else if(s_curr_hr > 100) {
+        progress = 75;
+    }
+
+    graphics_context_set_fill_color(ctx, GColorBlack);
+    graphics_fill_rect(ctx, (GRect) {.origin = {2, 90}, .size = {100, 3}}, 0, GCornerNone);
+    graphics_fill_rect(ctx, (GRect) {.origin = {2, 108}, .size = {100, 3}}, 0, GCornerNone);
+
+    graphics_fill_rect(ctx, (GRect) {.origin = {2, 85}, .size = {3, 5}}, 0, GCornerNone);
+    graphics_fill_rect(ctx, (GRect) {.origin = {27, 87}, .size = {3, 3}}, 0, GCornerNone);
+    graphics_fill_rect(ctx, (GRect) {.origin = {52, 85}, .size = {3, 5}}, 0, GCornerNone);
+    graphics_fill_rect(ctx, (GRect) {.origin = {77, 87}, .size = {3, 3}}, 0, GCornerNone);
+    graphics_fill_rect(ctx, (GRect) {.origin = {99, 85}, .size = {3, 5}}, 0, GCornerNone);
+
+    graphics_fill_rect(ctx, (GRect) {.origin = {2, 111}, .size = {3, 5}}, 0, GCornerNone);
+    graphics_fill_rect(ctx, (GRect) {.origin = {27, 111}, .size = {3, 3}}, 0, GCornerNone);
+    graphics_fill_rect(ctx, (GRect) {.origin = {52, 111}, .size = {3, 5}}, 0, GCornerNone);
+    graphics_fill_rect(ctx, (GRect) {.origin = {77, 111}, .size = {3, 3}}, 0, GCornerNone);
+    graphics_fill_rect(ctx, (GRect) {.origin = {99, 111}, .size = {3, 5}}, 0, GCornerNone);
+
+    graphics_fill_rect(ctx, (GRect) {.origin = {2, 93}, .size = {progress, 15}}, 0, GCornerNone);
+
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "update_progress_layer_proc: end, Heap Available: %d", heap_bytes_free());
 }
 
 static void prv_on_health_data(HealthEventType type, void *context) {
     // If the update was from the Heart Rate Monitor, update it
     if (type == HealthEventHeartRateUpdate) {
         s_curr_hr = (int16_t) health_service_peek_current_value(HealthMetricHeartRateRawBPM);
-
-        // Update our metrics
-        if (s_curr_hr < s_min_hr) s_min_hr = s_curr_hr;
-        if (s_curr_hr > s_max_hr) s_max_hr = s_curr_hr;
-        s_hr_samples++;
-        s_hr_total += s_curr_hr;
     }
-}
-
-static void prv_on_activity_tick(struct tm *tick_time, TimeUnits units_changed) {
-    // Update Time
-    time_t diff = time(NULL) - s_start_time;
-    struct tm *diff_time = gmtime(&diff);
-
-    static char s_time_buffer[9];
-    if (diff > SECONDS_PER_HOUR) {
-        strftime(s_time_buffer, sizeof(s_time_buffer), "%H:%M:%S", diff_time);
-    } else {
-        strftime(s_time_buffer, sizeof(s_time_buffer), "%M:%S", diff_time);
-    }
-    text_layer_set_text(s_time_text_layer, s_time_buffer);
-
-    // Update BPM
-    static char s_hrm_buffer[8];
-    snprintf(s_hrm_buffer, sizeof(s_hrm_buffer), "%lu BPM", (uint32_t) s_curr_hr);
-    text_layer_set_text(s_bpm_text_layer, s_hrm_buffer);
 }
 
 static void prv_start_activity(void) {
     // Update application state
-    s_app_state = STATE_IN_PROGRESS;
-    s_start_time = time(NULL);
+    s_app_state = STATE_STARTED;
 
     // Set min heart rate sampling period (i.e. fastest sampling rate)
     #if PBL_API_EXISTS(health_service_set_heart_rate_sample_period)
@@ -92,17 +158,11 @@ static void prv_start_activity(void) {
 
     // Subscribe to health handler
     health_service_events_subscribe(prv_on_health_data, NULL);
-
-    // Update UI
-    text_layer_set_text(s_status_text_layer, END_ACTIVITY_STRING);
-    layer_set_hidden(text_layer_get_layer(s_time_text_layer), false);
-    layer_set_hidden(text_layer_get_layer(s_bpm_text_layer), false);
 }
 
 static void prv_end_activity(void) {
     // Update application state
-    s_app_state = STATE_FINISHED;
-    s_end_time = time(NULL);
+    s_app_state = STATE_STOPPED;
 
     // Set default heart rate sampling period
     #if PBL_API_EXISTS(health_service_set_heart_rate_sample_period)
@@ -114,56 +174,17 @@ static void prv_end_activity(void) {
 
     // Unsubscribe from health handler
     health_service_events_unsubscribe();
-
-    // Update UI
-    layer_set_hidden(text_layer_get_layer(s_status_text_layer), true);
-    layer_set_hidden(text_layer_get_layer(s_time_text_layer), true);
-    layer_set_hidden(text_layer_get_layer(s_bpm_text_layer), true);
-
-    static char s_time_buffer[16];
-    time_t diff = s_end_time - s_start_time;
-    struct tm *diff_time = gmtime(&diff);
-
-    if (diff > SECONDS_PER_HOUR) {
-        strftime(s_time_buffer, sizeof(s_time_buffer), "Time: %H:%M:%S", diff_time);
-    } else {
-        strftime(s_time_buffer, sizeof(s_time_buffer), "Time: %M:%S", diff_time);
-    }
-    text_layer_set_text(s_total_time_text_layer, s_time_buffer);
-
-    static char s_avg_bpm_buffer[16];
-    snprintf(s_avg_bpm_buffer, sizeof(s_avg_bpm_buffer), "Avg: %u BPM", get_avg_hr());
-    text_layer_set_text(s_avg_bpm_text_layer, s_avg_bpm_buffer);
-
-    static char s_max_bpm_buffer[16];
-    snprintf(s_max_bpm_buffer, sizeof(s_max_bpm_buffer), "Max: %u BPM", get_max_hr());
-    text_layer_set_text(s_max_bpm_text_layer, s_max_bpm_buffer);
-
-    static char s_min_bpm_buffer[16];
-    snprintf(s_min_bpm_buffer, sizeof(s_min_bpm_buffer), "Min: %u BPM", get_min_hr());
-    text_layer_set_text(s_min_bpm_text_layer, s_min_bpm_buffer);
-
-    layer_set_hidden(text_layer_get_layer(s_title_text_layer), false);
-    layer_set_hidden(text_layer_get_layer(s_total_time_text_layer), false);
-    layer_set_hidden(text_layer_get_layer(s_avg_bpm_text_layer), false);
-    layer_set_hidden(text_layer_get_layer(s_min_bpm_text_layer), false);
-    layer_set_hidden(text_layer_get_layer(s_max_bpm_text_layer), false);
-
 }
 
 static void prv_select_click_handler(ClickRecognizerRef recognizer, void *context) {
     switch (s_app_state) {
-        case STATE_NOT_STARTED:
+        case STATE_STOPPED:
             // Display activity
             prv_start_activity();
             break;
-        case STATE_IN_PROGRESS:
-            // Display Metrics
+        case STATE_STARTED:
+            // Display first screen
             prv_end_activity();
-            break;
-        default:
-            // Quit
-            window_stack_pop(true);
             break;
     }
 }
@@ -173,78 +194,65 @@ static void prv_click_config_provider(void *context) {
 }
 
 static void prv_window_load(Window *window) {
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "window_load: start");
+
     Layer *window_layer = window_get_root_layer(window);
     GRect bounds = layer_get_bounds(window_layer);
 
-    // Determin how we launched (automaticaly start activity on quick launch)
-    bool quick_launch = launch_reason() == APP_LAUNCH_QUICK_LAUNCH;
+    s_day_name_text_layer = text_layer_create((GRect) {.origin = {0, 13}, .size = {bounds.size.w - 30, 25}});
+    text_layer_set_background_color(s_day_name_text_layer, GColorClear);
+    text_layer_set_text_color(s_day_name_text_layer, GColorBlack);
+    text_layer_set_font(s_day_name_text_layer, fonts_get_system_font(FONT_KEY_ROBOTO_CONDENSED_21));
+    text_layer_set_text_alignment(s_day_name_text_layer, GTextAlignmentCenter);
 
-    // Status
-    s_status_text_layer = text_layer_create(GRect(0, 67, bounds.size.w, 40));
-    text_layer_set_text(s_status_text_layer, quick_launch ? END_ACTIVITY_STRING
-                                                          : START_ACTIVITY_STRING);
-    text_layer_set_text_alignment(s_status_text_layer, GTextAlignmentCenter);
-    layer_set_hidden(text_layer_get_layer(s_status_text_layer), false);
-    layer_add_child(window_layer, text_layer_get_layer(s_status_text_layer));
-
-    // Time in activity (Hidden)
-    s_time_text_layer = text_layer_create(GRect(0, 27, bounds.size.w, 20));
-    text_layer_set_text(s_time_text_layer, "00:00");
+    s_banana_brick_font_42 = fonts_load_custom_font(resource_get_handle(RESOURCE_ID_BANANA_BRICK_36));
+    s_time_text_layer = text_layer_create((GRect) {.origin = {0, 35}, .size = {bounds.size.w - 30, 43}});
+    text_layer_set_background_color(s_time_text_layer, GColorClear);
+    text_layer_set_text_color(s_time_text_layer, GColorBlack);
+    text_layer_set_font(s_time_text_layer, s_banana_brick_font_42);
     text_layer_set_text_alignment(s_time_text_layer, GTextAlignmentCenter);
-    layer_set_hidden(text_layer_get_layer(s_time_text_layer), !quick_launch);
+
+    s_date_week_time_layer = text_layer_create((GRect) {.origin = {0, 130}, .size = {bounds.size.w, 20}});
+    text_layer_set_background_color(s_date_week_time_layer, GColorClear);
+    text_layer_set_text_color(s_date_week_time_layer, GColorBlack);
+    text_layer_set_font(s_date_week_time_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
+    text_layer_set_text_alignment(s_date_week_time_layer, GTextAlignmentCenter);
+
+    s_bt_image_layer = layer_create((GRect) {.origin = {bounds.size.w - 30, 20}, .size = {22, 52}});
+    layer_set_update_proc(s_bt_image_layer, update_bt_image_layer_proc);
+
+    s_status_image_layer = layer_create((GRect) {.origin = {bounds.size.w - 40, 80}, .size = {40, 40}});
+    layer_set_update_proc(s_status_image_layer, update_status_image_layer_proc);
+
+    s_progress_layer = layer_create((GRect) {.origin = {0, 0}, .size = {bounds.size.w, bounds.size.h}});
+    layer_set_update_proc(s_progress_layer, update_progress_layer_proc);
+
+    layer_add_child(window_layer, text_layer_get_layer(s_day_name_text_layer));
     layer_add_child(window_layer, text_layer_get_layer(s_time_text_layer));
+    layer_add_child(window_layer, text_layer_get_layer(s_date_week_time_layer));
+    layer_add_child(window_layer, s_bt_image_layer);
+    layer_add_child(window_layer, s_status_image_layer);
+    layer_add_child(window_layer, s_progress_layer);
 
-    // Curr BPM (hidden)
-    s_bpm_text_layer = text_layer_create(GRect(0, 117, bounds.size.w, 20));
-    text_layer_set_text(s_bpm_text_layer, "??? BPM");
-    text_layer_set_text_alignment(s_bpm_text_layer, GTextAlignmentCenter);
-    layer_set_hidden(text_layer_get_layer(s_bpm_text_layer), !quick_launch);
-    layer_add_child(window_layer, text_layer_get_layer(s_bpm_text_layer));
+    bool is_connected = bluetooth_connection_service_peek();
+    bluetooth_callback(is_connected);
 
-
-    // "Workout Summay" (Hidden)
-    s_title_text_layer = text_layer_create(GRect(0, 10, bounds.size.w, 20));
-    text_layer_set_text(s_title_text_layer, "Workout Summary");
-    text_layer_set_text_alignment(s_title_text_layer, GTextAlignmentCenter);
-    layer_set_hidden(text_layer_get_layer(s_title_text_layer), true);
-    layer_add_child(window_layer, text_layer_get_layer(s_title_text_layer));
-
-    // Total Time (Hidden)
-    s_total_time_text_layer = text_layer_create(GRect(0, 35, bounds.size.w, 20));
-    text_layer_set_text_alignment(s_total_time_text_layer, GTextAlignmentCenter);
-    layer_set_hidden(text_layer_get_layer(s_total_time_text_layer), true);
-    layer_add_child(window_layer, text_layer_get_layer(s_total_time_text_layer));
-
-    // Avg BPM (Hidden)
-    s_avg_bpm_text_layer = text_layer_create(GRect(0, 85, bounds.size.w, 20));
-    text_layer_set_text_alignment(s_avg_bpm_text_layer, GTextAlignmentCenter);
-    layer_set_hidden(text_layer_get_layer(s_avg_bpm_text_layer), true);
-    layer_add_child(window_layer, text_layer_get_layer(s_avg_bpm_text_layer));
-
-    // Max BPM (Hidden)
-    s_max_bpm_text_layer = text_layer_create(GRect(0, 110, bounds.size.w, 20));
-    text_layer_set_text_alignment(s_max_bpm_text_layer, GTextAlignmentCenter);
-    layer_set_hidden(text_layer_get_layer(s_max_bpm_text_layer), true);
-    layer_add_child(window_layer, text_layer_get_layer(s_max_bpm_text_layer));
-
-    // Min BPM (Hidden)
-    s_min_bpm_text_layer = text_layer_create(GRect(0, 135, bounds.size.w, 20));
-    text_layer_set_text_alignment(s_min_bpm_text_layer, GTextAlignmentCenter);
-    layer_set_hidden(text_layer_get_layer(s_min_bpm_text_layer), true);
-    layer_add_child(window_layer, text_layer_get_layer(s_min_bpm_text_layer));
-
-    if (quick_launch) prv_start_activity();
+    APP_LOG(APP_LOG_LEVEL_DEBUG, "window_load: end");
 }
 
 static void prv_window_unload(Window *window) {
-    text_layer_destroy(s_status_text_layer);
-    text_layer_destroy(s_time_text_layer);
-    text_layer_destroy(s_bpm_text_layer);
+    fonts_unload_custom_font(s_banana_brick_font_42);
 
-    text_layer_destroy(s_title_text_layer);
-    text_layer_destroy(s_avg_bpm_text_layer);
-    text_layer_destroy(s_max_bpm_text_layer);
-    text_layer_destroy(s_min_bpm_text_layer);
+    text_layer_destroy(s_time_text_layer);
+    text_layer_destroy(s_day_name_text_layer);
+    text_layer_destroy(s_date_week_time_layer);
+
+    gbitmap_destroy(s_status_image);
+    gbitmap_destroy(s_bt_image);
+
+    layer_destroy(s_bt_image_layer);
+    layer_destroy(s_status_image_layer);
+    layer_destroy(s_progress_layer);
 }
 
 static void prv_init(void) {
@@ -256,6 +264,13 @@ static void prv_init(void) {
     });
 
     window_stack_push(s_window, true);
+
+    // Update time immediately to avoid flash of "timeless" clock
+    time_t now = time(NULL);
+    struct tm *t = localtime(&now);
+    update_time(t);
+
+    bluetooth_connection_service_subscribe(bluetooth_callback);
 }
 
 static void prv_deinit(void) {
@@ -266,6 +281,7 @@ static void prv_deinit(void) {
     health_service_set_heart_rate_sample_period(0);
     #endif
 
+    bluetooth_connection_service_unsubscribe();
 }
 
 int main(void) {
