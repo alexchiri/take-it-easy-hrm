@@ -22,13 +22,33 @@ static bool bluetooth;
 static ActivityState s_app_state = STATE_STARTED;
 static uint16_t s_curr_hr = 0;
 
-
-
 static void update_time(struct tm *tick_time) {
     // Create a long-lived buffer
     static char time_buffer[] = "00:00";
     static char day_name_buffer[] = "Wednesday";
     static char date_week_buffer[] = "00 Mon YEAR, wk no";
+
+    // vibrate every 10 seconds and only if BPM > 110
+    if(tick_time->tm_sec % 10 == 0 && s_curr_hr > 110) {
+        static const uint32_t const segments[] = {
+                100, // vibe
+                400, // pause
+                100, // vibe
+                100, // pause
+                100, // vibe
+                200, // pause
+                100, // vibe
+                400, // pause
+                100, // vibe
+                200, // pause
+                100  // vibe
+        };
+        VibePattern pat = {
+                .durations = segments,
+                .num_segments = ARRAY_LENGTH(segments),
+        };
+        vibes_enqueue_custom_pattern(pat);
+    }
 
     // Write the current hours and minutes into the buffer
     if (clock_is_24h_style() == true) {
@@ -110,14 +130,16 @@ static void update_progress_layer_proc(Layer *layer, GContext *ctx) {
         text_layer_destroy(s_hrm_off_text_layer);
 
         uint16_t progress = 0;
-        if(s_curr_hr > 70 && s_curr_hr < 80 ) {
+        if(s_curr_hr > 70 && s_curr_hr <= 80 ) {
             progress = 25;
-        } else if(s_curr_hr > 80 && s_curr_hr < 90 ) {
+        } else if(s_curr_hr > 80 && s_curr_hr <= 90 ) {
             progress = 50;
-        } else if(s_curr_hr > 90 && s_curr_hr < 100 ) {
+        } else if(s_curr_hr > 90 && s_curr_hr <= 100 ) {
             progress = 75;
-        } else if(s_curr_hr > 100) {
+        } else if(s_curr_hr > 100 && s_curr_hr <= 110) {
             progress = 75;
+        } else if(s_curr_hr > 110) {
+            progress = 100;
         }
 
         graphics_context_set_fill_color(ctx, GColorBlack);
@@ -137,17 +159,29 @@ static void update_progress_layer_proc(Layer *layer, GContext *ctx) {
         graphics_fill_rect(ctx, (GRect) {.origin = {99, 111}, .size = {3, 5}}, 0, GCornerNone);
 
         graphics_fill_rect(ctx, (GRect) {.origin = {2, 93}, .size = {progress, 15}}, 0, GCornerNone);
-    } else {
-        char *text = "HRM is off";
-        GFont font = fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD);
+
+        static char s_hrm_buffer[8];
+        snprintf(s_hrm_buffer, sizeof(s_hrm_buffer), "%lu BPM", (uint32_t) s_curr_hr);
+        GFont hrm_font = fonts_get_system_font(FONT_KEY_ROBOTO_CONDENSED_21);
         graphics_context_set_text_color(ctx, GColorBlack);
-        GRect text_bounds = (GRect) {.origin = {0, 80}, .size = {100, 30}};
-        GSize text_size = graphics_text_layout_get_content_size(text,
-                                                                font,
+        GRect text_bounds = (GRect) {.origin = {0, 118}, .size = {100, 25}};
+        GSize text_size = graphics_text_layout_get_content_size(s_hrm_buffer,
+                                                                hrm_font,
                                                                 text_bounds,
                                                                 GTextOverflowModeWordWrap,
                                                                 GTextAlignmentCenter);
-        graphics_draw_text(ctx, text, font, text_bounds, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
+        graphics_draw_text(ctx, s_hrm_buffer, hrm_font, text_bounds, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
+    } else {
+        char *hrm_off_text = "HRM is off";
+        GFont hrm_off_font = fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD);
+        graphics_context_set_text_color(ctx, GColorBlack);
+        GRect text_bounds = (GRect) {.origin = {0, 80}, .size = {100, 30}};
+        GSize text_size = graphics_text_layout_get_content_size(hrm_off_text,
+                                                                hrm_off_font,
+                                                                text_bounds,
+                                                                GTextOverflowModeWordWrap,
+                                                                GTextAlignmentCenter);
+        graphics_draw_text(ctx, hrm_off_text, hrm_off_font, text_bounds, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
     }
 
     APP_LOG(APP_LOG_LEVEL_DEBUG, "update_progress_layer_proc: end, Heap Available: %d", heap_bytes_free());
@@ -176,6 +210,7 @@ static void prv_start_activity(void) {
 static void prv_end_activity(void) {
     // Update application state
     s_app_state = STATE_STOPPED;
+    s_curr_hr = 0;
 
     // Set default heart rate sampling period
     #if PBL_API_EXISTS(health_service_set_heart_rate_sample_period)
@@ -222,7 +257,7 @@ static void prv_window_load(Window *window) {
     text_layer_set_font(s_time_text_layer, s_banana_brick_font_42);
     text_layer_set_text_alignment(s_time_text_layer, GTextAlignmentCenter);
 
-    s_date_week_time_layer = text_layer_create((GRect) {.origin = {0, 130}, .size = {bounds.size.w, 20}});
+    s_date_week_time_layer = text_layer_create((GRect) {.origin = {0, 140}, .size = {bounds.size.w, 20}});
     text_layer_set_background_color(s_date_week_time_layer, GColorClear);
     text_layer_set_text_color(s_date_week_time_layer, GColorBlack);
     text_layer_set_font(s_date_week_time_layer, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
