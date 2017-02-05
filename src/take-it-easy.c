@@ -2,6 +2,7 @@
 
 typedef enum ActivityState {
     STATE_STARTED,
+    STATE_NO_VIBRATION,
     STATE_STOPPED
 } ActivityState;
 
@@ -13,6 +14,7 @@ static TextLayer *s_day_name_text_layer;
 static TextLayer *s_date_week_time_layer;
 static Layer *s_bt_image_layer;
 static Layer *s_status_image_layer;
+static Layer *s_battery_layer;
 static GBitmap *s_status_image;
 static GBitmap *s_bt_image;
 static Layer *s_progress_layer;
@@ -29,7 +31,7 @@ static void update_time(struct tm *tick_time) {
     static char date_week_buffer[] = "00 Mon YEAR, wk no";
 
     // vibrate every 10 seconds and only if BPM > 110
-    if(tick_time->tm_sec % 10 == 0 && s_curr_hr > 110) {
+    if(tick_time->tm_sec % 10 == 0 && s_curr_hr > 110 && s_app_state == STATE_STARTED) {
         static const uint32_t const segments[] = {
                 100, // vibe
                 400, // pause
@@ -121,12 +123,31 @@ static void update_status_image_layer_proc(Layer *layer, GContext *ctx) {
     APP_LOG(APP_LOG_LEVEL_ERROR, "update_status_image_layer_proc: end, Heap Available: %d", heap_bytes_free());
 }
 
+static void update_battery_layer_proc(Layer *layer, GContext *ctx) {
+    // show if vibration is enabled
+
+    if(s_app_state == STATE_STARTED) {
+        GPoint vibrate_enabled_circle_center = GPoint(5, 5);
+        uint16_t vibrate_enabled_circle_radius = 5;
+        graphics_draw_circle(ctx, vibrate_enabled_circle_center, vibrate_enabled_circle_radius);
+        graphics_fill_circle(ctx, vibrate_enabled_circle_center, vibrate_enabled_circle_radius);
+    }
+
+    //show a line separator
+    graphics_fill_rect(ctx, (GRect) {.origin = {10, 4}, .size = {34, 2}}, 0, GCornerNone);
+
+    // show the battery level
+    BatteryChargeState battery_info = battery_state_service_peek();
+    graphics_context_set_fill_color(ctx, GColorBlack);
+    graphics_fill_rect(ctx, (GRect) {.origin = {44, 0}, .size = {battery_info.charge_percent, 10}}, 0, GCornerNone);
+}
+
 static void update_progress_layer_proc(Layer *layer, GContext *ctx) {
     APP_LOG(APP_LOG_LEVEL_ERROR, "update_progress_layer_proc: start, Heap Available: %d", heap_bytes_free());
 
     GRect bounds = layer_get_bounds(layer);
 
-    if(s_app_state == STATE_STARTED) {
+    if(s_app_state != STATE_STOPPED) {
         text_layer_destroy(s_hrm_off_text_layer);
 
         uint16_t progress = 0;
@@ -165,22 +186,12 @@ static void update_progress_layer_proc(Layer *layer, GContext *ctx) {
         GFont hrm_font = fonts_get_system_font(FONT_KEY_ROBOTO_CONDENSED_21);
         graphics_context_set_text_color(ctx, GColorBlack);
         GRect text_bounds = (GRect) {.origin = {0, 118}, .size = {100, 25}};
-        GSize text_size = graphics_text_layout_get_content_size(s_hrm_buffer,
-                                                                hrm_font,
-                                                                text_bounds,
-                                                                GTextOverflowModeWordWrap,
-                                                                GTextAlignmentCenter);
         graphics_draw_text(ctx, s_hrm_buffer, hrm_font, text_bounds, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
     } else {
         char *hrm_off_text = "HRM is off";
         GFont hrm_off_font = fonts_get_system_font(FONT_KEY_GOTHIC_28_BOLD);
         graphics_context_set_text_color(ctx, GColorBlack);
         GRect text_bounds = (GRect) {.origin = {0, 80}, .size = {100, 30}};
-        GSize text_size = graphics_text_layout_get_content_size(hrm_off_text,
-                                                                hrm_off_font,
-                                                                text_bounds,
-                                                                GTextOverflowModeWordWrap,
-                                                                GTextAlignmentCenter);
         graphics_draw_text(ctx, hrm_off_text, hrm_off_font, text_bounds, GTextOverflowModeWordWrap, GTextAlignmentCenter, NULL);
     }
 
@@ -224,11 +235,15 @@ static void prv_end_activity(void) {
 static void prv_select_click_handler(ClickRecognizerRef recognizer, void *context) {
     switch (s_app_state) {
         case STATE_STOPPED:
-            // Display activity
+            // subscribe to hrm
             prv_start_activity();
             break;
         case STATE_STARTED:
-            // Display first screen
+            // just disable vibration
+            s_app_state = STATE_NO_VIBRATION;
+            break;
+        case STATE_NO_VIBRATION:
+            // unsubscribe from hrm and reset hrm recording
             prv_end_activity();
             break;
     }
@@ -243,6 +258,9 @@ static void prv_window_load(Window *window) {
 
     Layer *window_layer = window_get_root_layer(window);
     GRect bounds = layer_get_bounds(window_layer);
+
+    s_battery_layer = layer_create((GRect) {.origin = {0, 0}, .size = {bounds.size.w, 15}});
+    layer_set_update_proc(s_battery_layer, update_battery_layer_proc);
 
     s_day_name_text_layer = text_layer_create((GRect) {.origin = {0, 13}, .size = {bounds.size.w - 30, 25}});
     text_layer_set_background_color(s_day_name_text_layer, GColorClear);
@@ -278,6 +296,7 @@ static void prv_window_load(Window *window) {
     layer_add_child(window_layer, s_bt_image_layer);
     layer_add_child(window_layer, s_status_image_layer);
     layer_add_child(window_layer, s_progress_layer);
+    layer_add_child(window_layer, s_battery_layer);
 
     bool is_connected = bluetooth_connection_service_peek();
     bluetooth_callback(is_connected);
@@ -299,6 +318,7 @@ static void prv_window_unload(Window *window) {
     layer_destroy(s_bt_image_layer);
     layer_destroy(s_status_image_layer);
     layer_destroy(s_progress_layer);
+    layer_destroy(s_battery_layer);
 }
 
 static void prv_init(void) {
